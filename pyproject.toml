@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arz-frontend"
+version = "0.1.0"
+description = "Egyptian Arabic (Cairene) G2P front-end for Kokoro/StyleTTS2 TTS training"
+requires-python = ">=3.9"
+
+[project.optional-dependencies]
+test = ["pytest", "pandas", "pyarrow"]
+
+[tool.setuptools.packages.find]
+include = ["arz_frontend*"]

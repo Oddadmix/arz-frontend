@@ -9,6 +9,10 @@ Every decision below was verified empirically against the ``arz`` voice
   dropped via a small denylist (policy knob: extend ``_SOURCE_TAGS``). Other
   parentheticals are kept and voiced (Nabra precedent: parens content is
   voiced by espeak).
+* Non-Arabic/non-Latin scripts (CJK, Cyrillic, Thai, Indic, …) are stripped
+  in both modes: espeak voice-switches on them (CJK → Mandarin), producing
+  non-Egyptian phonemes. Arabic presentation forms (ﷺ, ﻻ) are kept — the
+  voice handles them since the v3 FOREIGN/lexicon fix.
 * Latin-script runs are dropped by default (``keep_latin=False``): a narrator
   reading Egyptian does not voice "I love" in English mid-sentence, so keeping
   the phonemes would misalign text and audio. Email/URL-like tokens are
@@ -56,6 +60,38 @@ _EMAIL_URL = re.compile(
 # Runs of Latin letters = code-switched spans espeak would voice in English.
 _LATIN_RUN = re.compile(r"[A-Za-z]+")
 
+# Characters from scripts espeak would voice-switch on (CJK -> Mandarin etc.),
+# producing non-Egyptian phonemes — the audit's 1 Mandarin row proves this
+# happens in the wild. Stripped in BOTH modes, before Latin handling, because
+# even keep_latin=True inference should not emit (cmn) spans for this voice.
+# Arabic presentation forms (incl. the ﷺ ligature U+FDFA and ﻻ) are NOT in
+# these ranges and are kept: the voice handles them (v3 FOREIGN/lexicon fix).
+_NON_ARABIC_SCRIPT = re.compile(
+    "["
+    "\u0370-\u03FF"      # Greek
+    "\u0400-\u04FF"      # Cyrillic
+    "\u0500-\u052F"      # Cyrillic Supplement
+    "\u0530-\u058F"      # Armenian
+    "\u0590-\u05FF"      # Hebrew
+    "\u0900-\u0DFF"      # Indic scripts (Devanagari..Malayalam)
+    "\u0E00-\u0E7F"      # Thai
+    "\u0E80-\u0EFF"      # Lao
+    "\u0F00-\u0FFF"      # Tibetan
+    "\u1000-\u109F"      # Myanmar
+    "\u10A0-\u10FF"      # Georgian
+    "\u1200-\u137F"      # Ethiopic
+    "\u3040-\u30FF"      # Hiragana + Katakana
+    "\u3100-\u312F"      # Bopomofo
+    "\u3130-\u318F"      # Hangul Compatibility Jamo
+    "\u3400-\u4DBF"      # CJK Extension A
+    "\u4E00-\u9FFF"      # CJK Unified Ideographs
+    "\uAC00-\uD7AF"      # Hangul Syllables
+    "\U00020000-\U0002A6DF"  # CJK Extension B
+    "\U0002A6E0-\U0002CEAF"  # CJK Extensions C-F
+    "\uFF00-\uFFEF"      # Halfwidth/fullwidth forms
+    "]"
+)
+
 _TATWEEL = "ـ"  # U+0640 ARABIC TATWEEL
 
 # Punctuation mapped to space. The first group MUST be mapped: these are the
@@ -92,7 +128,14 @@ def normalize_text(text: str, keep_latin: bool = False) -> tuple[str, dict]:
         ``cleaned_text`` contains no clause/sentence punctuation and no
         newlines, which is what lets :func:`phonemize` batch lines 1:1.
     """
-    stats = {"latin_dropped": 0}
+    stats = {"latin_dropped": 0, "script_stripped": 0}
+
+    # Non-Arabic/non-Latin scripts first: espeak voice-switches on them
+    # (CJK -> Mandarin), producing phonemes no Egyptian model should train on.
+    foreign = _NON_ARABIC_SCRIPT.findall(text)
+    if foreign:
+        stats["script_stripped"] = len(foreign)
+        text = _NON_ARABIC_SCRIPT.sub(" ", text)
 
     text = _CITATION.sub(" ", text)
     text = _SOURCE_TAG.sub(" ", text)

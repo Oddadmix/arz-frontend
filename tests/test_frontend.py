@@ -20,7 +20,9 @@ from arz_frontend import (
 )
 
 ESPEAK_ROOT = os.environ.get("ARZ_ESPEAK_ROOT", "/tmp/espeak-ng/build")
-PARQUET = "/tmp/egyptian.parquet"
+PARQUET = os.environ.get(
+    "ARZ_CORPUS_PARQUET", "/home/hatch/workspace/data/egyptian.parquet"
+)
 
 
 class TestNormalize(unittest.TestCase):
@@ -63,6 +65,24 @@ class TestNormalize(unittest.TestCase):
     def test_empty_and_punct_only(self):
         self.assertEqual(normalize_text("")[0], "")
         self.assertEqual(normalize_text("؟!،")[0], "")
+
+    def test_cjk_stripped(self):
+        # Audit row 21603: 散 (U+6563) made espeak voice-switch to Mandarin.
+        text, stats = normalize_text("من散هم")
+        self.assertEqual(text, "من هم")
+        self.assertEqual(stats["script_stripped"], 1)
+
+    def test_cyrillic_and_thai_stripped(self):
+        text, stats = normalize_text("مصر москва กรุงเทพ")
+        self.assertEqual(text, "مصر")
+        self.assertGreater(stats["script_stripped"], 0)
+
+    def test_salawat_ligature_kept(self):
+        # ﷺ (U+FDFA) is an Arabic presentation form the voice handles
+        # (v3 lexicon fix) — the normalizer must not strip it.
+        text, stats = normalize_text("قال ﷺ")
+        self.assertEqual(text, "قال ﷺ")
+        self.assertEqual(stats["script_stripped"], 0)
 
 
 class TestPipeline(unittest.TestCase):
@@ -120,6 +140,32 @@ class TestPipeline(unittest.TestCase):
 
     def test_text_to_phonemes_convenience(self):
         self.assertEqual(text_to_phonemes("إنت فين؟"), "ˈinta fˈeːn")
+
+    def test_salawat_ligature_voiced(self):
+        # Audit anomaly: ﷺ used to be spelled aloud as its hex codepoint.
+        # v3 lexicon fix expands it to the salawat phrase.
+        self.assertEqual(
+            self.g2p("ﷺ"), "sallaʔallaːhʕaleːwisˈallam"
+        )
+
+    def test_urdu_dal_mapped(self):
+        # Audit anomaly: ڈ used to be spelled as "ستة تمانية تمانية".
+        # v3 FOREIGN fix maps it to د.
+        self.assertEqual(self.g2p("ڈال"), "dˈaːl")
+
+    def test_leading_dash_via_stdin(self):
+        # Audit harness artifact: 2 rows starting with "- " produced empty
+        # output because argv parsing treated the dash as an option flag.
+        # The front-end always passes text via stdin, so these phonemize.
+        ph = self.g2p("- قال أهلا")
+        self.assertEqual(ph, "ʔˈaːl ʔˈahlan")
+
+    def test_mandarin_row_no_foreign_phonemes(self):
+        # Audit row 21603: CJK char caused a (cmn) voice switch leaking a
+        # tone digit into the IPA. The normalizer strips the script now.
+        ph = self.g2p("من散هم")
+        self.assertEqual(ph, "mˈin hˈumma")
+        self.assertNotRegex(ph, r"[0-9\u0660-\u0669]")
 
 
 class TestCleaner(unittest.TestCase):
